@@ -1,6 +1,6 @@
 use std::{
     process::exit,
-    io::Write, env::args
+    io::Write,
 };
 
 use crate::dbg;
