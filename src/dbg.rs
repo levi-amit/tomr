@@ -11,6 +11,10 @@ use std::{
     ffi::CString,
 };
 
+/// Identifier for debugees
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dbgid(i32);
+
 /// Error originating from tomr's dbg module's API
 #[derive(Debug)]
 pub enum Error {
@@ -18,20 +22,60 @@ pub enum Error {
 }
 
 
-#[derive(Debug)]
-struct Debugee {
+#[derive(Debug, Clone)]
+pub struct Debugees {
+    vec: Vec<Debugee>,
+}
+
+impl Debugees {
+    fn new() -> Debugees {
+        Debugees {
+            vec: Vec::new(),
+        }
+    }
+
+    /// Extend the debugees vector with a new Debugee struct, having a generated dbgid
+    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<(), ()> {
+        // iterate DEBUGEES vector to find lowest unused dbgid
+        let mut dbgid = 0;
+        for dbgee in self.vec.iter() {
+            if dbgee.dbgid == Dbgid(dbgid) { dbgid += 1; }
+        }
+
+        // push new Debugee with the generated dbgid to self
+        self.vec.push(Debugee {
+            dbgid: Dbgid(dbgid),
+            pid,
+            origin,
+        });
+
+        Ok(())
+    }
+
+    fn from_dbgid(&self, dbgid: Dbgid) -> Option<&Debugee> {
+        for dbgee in self.vec.iter() {
+            if dbgee.dbgid == dbgid { return Some(dbgee) }
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Debugee {
+    dbgid: Dbgid,
     pid: Pid,
     origin: DebugeeOrigin,
 }
 
-#[derive(Debug)]
-enum DebugeeOrigin {
+
+#[derive(Debug, Clone)]
+pub enum DebugeeOrigin {
     Spawned,
     Attached,
 }
 
 lazy_static! {
-    static ref DEBUGEES: Mutex<Vec<Debugee>> = Mutex::new(Vec::new());
+    static ref DEBUGEES: Mutex<Debugees> = Mutex::new(Debugees::new());
 }
 
 
@@ -53,12 +97,7 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
     match unsafe { fork() } {
         // fork successful, update DEBUGEES with the new child's details
         Ok(ForkResult::Parent { child }) => {
-            DEBUGEES.lock().unwrap()
-                .push(Debugee {
-                    pid: child,
-                    origin: DebugeeOrigin::Spawned,
-                });
-
+            DEBUGEES.lock().unwrap().add(child, DebugeeOrigin::Spawned).ok();
             return Ok(child);
         }
 
@@ -75,4 +114,22 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
             return Err(Error::UnixError { errno })
         }
     }
+}
+
+
+// TODO: Convert return type to Result
+/// Returns a cloned copy of the static DEBUGEES vector
+pub fn debugees() -> Debugees {
+    DEBUGEES
+        .lock()
+        .unwrap()
+        .clone()
+}
+
+
+/// Continues the execution of a debugee
+pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
+    //// let pid = DEBUGEES.lock().unwrap().;
+
+    Ok(())
 }
