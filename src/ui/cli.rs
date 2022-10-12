@@ -74,7 +74,7 @@ fn handle_command_line(input: String) {
         Some("attach") => { unimplemented!() }
 
         Some("info") => {
-            println!("Debugged Processes:\n{:?}", dbg::debugees());
+            println!("Debugged Processes:\n{:?}", dbg::debugees().unwrap());
         }
 
         Some("continue") => {}

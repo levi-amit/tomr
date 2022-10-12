@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+
+
 use nix::{
     unistd::{Pid, fork, ForkResult, execvpe},
     sys::{ptrace}, 
@@ -117,19 +120,18 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
 }
 
 
-// TODO: Convert return type to Result
 /// Returns a cloned copy of the static DEBUGEES vector
-pub fn debugees() -> Debugees {
-    DEBUGEES
+pub fn debugees() -> Result<Debugees, Error> {
+    Ok(DEBUGEES
         .lock()
         .unwrap()
-        .clone()
+        .clone())
 }
 
 
-/// Continues the execution of a debugee
-pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
-    //// let pid = DEBUGEES.lock().unwrap().;
+// Continues the execution of a debugee
+// pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
+//     //// let pid = DEBUGEES.lock().unwrap().;
 
-    Ok(())
-}
+//     Ok(())
+// }
