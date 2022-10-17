@@ -9,7 +9,7 @@ use crate::dbg;
 pub fn start_cli() -> Result<(), ()> {
     loop {
         let input = prompt_for_line("tomr# ");
-        handle_command_line(input);
+        handle_command_line(input).ok();
     }
 
     #[allow(unreachable_code)]
@@ -31,7 +31,7 @@ fn prompt_for_line(prompt: &str) -> String {
 
 
 /// Performs actions based on a command string
-fn handle_command_line(input: String) {
+fn handle_command_line(input: String) -> Result<(), ()> {
     // the first word (text until the first whitespace) is taken as the command,
     // the rest of the string is taken as the command argument(s).
     let mut words = input.splitn(2, ' ');
@@ -53,7 +53,7 @@ fn handle_command_line(input: String) {
             if argstr.is_none() {
                 println!("no arguments supplied. correct usage is:\n\
                 spawn <executable> [argv1 [...]]");
-                return;
+                return Err(());
             }
 
             let mut args = argstr.unwrap().split(' ');
@@ -77,7 +77,32 @@ fn handle_command_line(input: String) {
             println!("Debugged Processes:\n{:?}", dbg::debugees().unwrap());
         }
 
-        Some("continue") => {}
+        Some("continue") => {
+            // only accepts 1 arg
+            // parse first arg as dbgid to continue
+            let dbgid: dbg::Dbgid = match words.next() {
+                None => {
+                    println!("no arguments supplied. correct usage is :\n\
+                    continue <dbgid>");
+                    return Err(());
+                }
+                Some(args) =>  {
+                    args.parse::<i32>()
+                        .or_else(|_| {
+                            println!("dbgid must be a number");
+                            Err(())
+                        })?
+                       .into()
+                }
+            };
+
+            dbg::cont(dbgid)
+                .or_else(|e| {
+                    println!("Encountered error: {:?}", e);
+                    Err(())
+                })?;
+        }
+
         Some("freeze") => {}
 
         None | Some("") => {}
@@ -85,4 +110,6 @@ fn handle_command_line(input: String) {
             println!("unknown command {}", unknown);
         }
     }
+
+    Ok(())
 }

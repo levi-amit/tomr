@@ -18,10 +18,18 @@ use std::{
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dbgid(i32);
 
+impl From<i32> for Dbgid {
+    fn from(dbgid: i32) -> Dbgid {
+        Dbgid(dbgid)
+    }
+}
+
+
 /// Error originating from tomr's dbg module's API
 #[derive(Debug)]
 pub enum Error {
     UnixError { errno: Errno },
+    NoSuchDebugee,
 }
 
 
@@ -31,13 +39,15 @@ pub struct Debugees {
 }
 
 impl Debugees {
+
+    /// Creates a new Debugees struct with a new owned Vec
     fn new() -> Debugees {
         Debugees {
             vec: Vec::new(),
         }
     }
 
-    /// Extend the debugees vector with a new Debugee struct, having a generated dbgid
+    /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
     fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<(), ()> {
         // iterate DEBUGEES vector to find lowest unused dbgid
         let mut dbgid = 0;
@@ -55,21 +65,21 @@ impl Debugees {
         Ok(())
     }
 
-    fn from_dbgid(&self, dbgid: Dbgid) -> Option<&Debugee> {
+    fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
         for dbgee in self.vec.iter() {
-            if dbgee.dbgid == dbgid { return Some(dbgee) }
+            if dbgee.dbgid == dbgid { return Ok(dbgee); }
         }
-        None
+        Err(Error::NoSuchDebugee)
     }
+
 }
 
 #[derive(Debug, Clone)]
 pub struct Debugee {
-    dbgid: Dbgid,
-    pid: Pid,
-    origin: DebugeeOrigin,
+    pub dbgid: Dbgid,
+    pub pid: Pid,
+    pub origin: DebugeeOrigin,
 }
-
 
 #[derive(Debug, Clone)]
 pub enum DebugeeOrigin {
@@ -130,8 +140,13 @@ pub fn debugees() -> Result<Debugees, Error> {
 
 
 // Continues the execution of a debugee
-// pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
-//     //// let pid = DEBUGEES.lock().unwrap().;
+pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
+    // resolve pid of process from dbgid, or return Error if dbgid is not a debugee
+    let pid = DEBUGEES.lock().unwrap().from_dbgid(dbgid)?.pid;
 
-//     Ok(())
-// }
+    // call ptrace cont for the found PID, or returns UnixError with Errno on ptrace failure
+    ptrace::cont(pid, None)
+        .or_else(|errno| Err(Error::UnixError { errno: errno }))?;
+
+    Ok(())
+}
