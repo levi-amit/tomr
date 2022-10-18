@@ -68,7 +68,11 @@ fn handle_command_line(input: String) -> Result<(), ()> {
                 argv.extend(argv_str.split(' '));
             }
 
-            dbg::spawn(path, &argv, &env).unwrap();
+            dbg::spawn(path, &argv, &env)
+                .or_else(|e| {
+                    println!("Encountered error: {:?}", e);
+                    Err(())
+                })?;
         }
 
         Some("attach") => { unimplemented!() }

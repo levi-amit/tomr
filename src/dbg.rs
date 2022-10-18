@@ -9,7 +9,7 @@ use nix::{
 use lazy_static::lazy_static;
 
 use std::{
-    sync::Mutex,
+    sync::RwLock,
     vec::Vec,
     ffi::CString,
 };
@@ -48,7 +48,7 @@ impl Debugees {
     }
 
     /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
-    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<(), ()> {
+    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<&Debugee, ()> {
         // iterate DEBUGEES vector to find lowest unused dbgid
         let mut dbgid = 0;
         for dbgee in self.vec.iter() {
@@ -62,7 +62,8 @@ impl Debugees {
             origin,
         });
 
-        Ok(())
+        // return a reference to the pushed Debugee struct
+        Ok(&self.vec[self.vec.len() - 1])
     }
 
     fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
@@ -88,12 +89,12 @@ pub enum DebugeeOrigin {
 }
 
 lazy_static! {
-    static ref DEBUGEES: Mutex<Debugees> = Mutex::new(Debugees::new());
+    static ref DEBUGEES: RwLock<Debugees> = RwLock::new(Debugees::new());
 }
 
 
 /// Creates a new traced process, and sets it as the active process
-pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
+pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> {
     // Since we're about to call nix functions,
     // we need to convert our string slices to CStrings
     let path = CString::new(path)
@@ -110,8 +111,10 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
     match unsafe { fork() } {
         // fork successful, update DEBUGEES with the new child's details
         Ok(ForkResult::Parent { child }) => {
-            DEBUGEES.lock().unwrap().add(child, DebugeeOrigin::Spawned).ok();
-            return Ok(child);
+            let mut dbgees_guard = DEBUGEES.write().unwrap();
+            let dbgee = dbgees_guard.add(child, DebugeeOrigin::Spawned)
+                .expect("Error: Could not add Debugee to DEBUGEES");
+            return Ok(dbgee.clone());
         }
 
         // fork successful, we are the child process. now traceme and exec!
@@ -132,17 +135,14 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Pid, Error> {
 
 /// Returns a cloned copy of the static DEBUGEES vector
 pub fn debugees() -> Result<Debugees, Error> {
-    Ok(DEBUGEES
-        .lock()
-        .unwrap()
-        .clone())
+    Ok(DEBUGEES.read().unwrap().clone())
 }
 
 
 // Continues the execution of a debugee
 pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
     // resolve pid of process from dbgid, or return Error if dbgid is not a debugee
-    let pid = DEBUGEES.lock().unwrap().from_dbgid(dbgid)?.pid;
+    let pid = DEBUGEES.read().unwrap().from_dbgid(dbgid)?.pid;
 
     // call ptrace cont for the found PID, or returns UnixError with Errno on ptrace failure
     ptrace::cont(pid, None)
