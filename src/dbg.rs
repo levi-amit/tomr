@@ -7,11 +7,17 @@ use nix::{
     errno::Errno,
 };
 use lazy_static::lazy_static;
+use signal_hook::{
+    iterator::{SignalsInfo, exfiltrator::WithOrigin},
+    consts::{SIGINT, SIGCHLD},
+    low_level::siginfo,
+};
 
 use std::{
     sync::RwLock,
     vec::Vec,
     ffi::CString,
+    thread, fmt::Display,
 };
 
 /// Identifier for debugees
@@ -21,6 +27,12 @@ pub struct Dbgid(i32);
 impl From<i32> for Dbgid {
     fn from(dbgid: i32) -> Dbgid {
         Dbgid(dbgid)
+    }
+}
+
+impl Display for Dbgid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -66,9 +78,26 @@ impl Debugees {
         Ok(&self.vec[self.vec.len() - 1])
     }
 
+    /// Removes a debugee from this struct's listing
+    fn remove(&mut self, dbgid: Dbgid) -> Result<(), Error> {
+        let index = self.vec.iter()
+            .position(|dbgee| dbgee.dbgid == dbgid)
+            .ok_or(Error::NoSuchDebugee)?;
+        
+        self.vec.remove(index);
+        Ok(())
+    }
+
     fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
         for dbgee in self.vec.iter() {
             if dbgee.dbgid == dbgid { return Ok(dbgee); }
+        }
+        Err(Error::NoSuchDebugee)
+    }
+
+    fn from_pid(&self, pid: Pid) -> Result<&Debugee, Error> {
+        for dbgee in self.vec.iter() {
+            if dbgee.pid == pid { return Ok(dbgee); }
         }
         Err(Error::NoSuchDebugee)
     }
@@ -90,6 +119,67 @@ pub enum DebugeeOrigin {
 
 lazy_static! {
     static ref DEBUGEES: RwLock<Debugees> = RwLock::new(Debugees::new());
+}
+
+
+pub fn setup_dbg() {
+    setup_signal_handlers().ok();
+}
+
+
+/// Starts a new thread for signal handling
+fn setup_signal_handlers() -> Result<(), Error> {
+    let mut signals: SignalsInfo<WithOrigin> = SignalsInfo::<WithOrigin>::new(&[SIGINT, SIGCHLD])
+        .expect("Could not set up signal iterator through signal-hook");
+
+    thread::spawn(move || {
+        for siginfo in signals.forever() {
+            // this line is to help rust-analyzer to detect the type of `siginfo`
+            let siginfo: siginfo::Origin = siginfo;
+
+            match siginfo.signal {
+                SIGCHLD => { handle_sigchld(siginfo); }
+                SIGINT => { handle_sigint(siginfo); }
+                _ => {}
+            }
+        }
+    });
+
+    Ok(())
+}
+
+
+/// Handles all received SIGCHLD
+/// NOT FINISHED, SHOULD NOT PRINT DIRECTLY FROM dbg MODULE
+fn handle_sigchld(siginfo: siginfo::Origin) {
+    // determine signaling child debugee
+    let dbgee = DEBUGEES.read().unwrap()
+        .from_pid(Pid::from_raw(
+            siginfo.process
+                .expect("SIGCHLD unexpecedly did not contain an originating process")
+                .pid
+            )
+        )
+        .expect("Non-debugee process sent SIGCHLD, currently unhandled")
+        .clone();
+
+    match siginfo.cause {
+        siginfo::Cause::Chld(siginfo::Chld::Trapped) => {
+            println!("\nDebugee {} (PID {}) was trapped", dbgee.dbgid, dbgee.pid);
+        }
+        siginfo::Cause::Chld(siginfo::Chld::Exited) => {
+            println!("\nDebugee {} (PID {}) has exited", dbgee.dbgid, dbgee.pid);
+            DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
+        }
+        _ => {
+            println!("\nDebugee {:?} sent SIGCHLD: {:?}", dbgee, siginfo);
+        }
+    }
+}
+
+
+fn handle_sigint(_siginfo: siginfo::Origin) {
+    unimplemented!();
 }
 
 
@@ -133,7 +223,7 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
 }
 
 
-/// Returns a cloned copy of the static DEBUGEES vector
+/// Returns a cloned copy of the static DEBUGEES Debugees struct
 pub fn debugees() -> Result<Debugees, Error> {
     Ok(DEBUGEES.read().unwrap().clone())
 }
@@ -150,3 +240,4 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
 
     Ok(())
 }
+

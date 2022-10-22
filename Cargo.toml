@@ -9,3 +9,4 @@ edition = "2021"
 cursive = "*"
 nix = "*"
 lazy_static = "*"
+signal-hook = { version = "*", features = ["extended-siginfo"] }
