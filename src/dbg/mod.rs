@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod signals;
 
 use nix::{
     unistd::{Pid, fork, ForkResult, execvpe},
@@ -17,27 +18,14 @@ use std::{
     sync::RwLock,
     vec::Vec,
     ffi::CString,
-    thread, fmt::Display,
+    thread,
 };
 
 /// Identifier for debugees
-#[derive(Debug, Clone, PartialEq)]
-pub struct Dbgid(i32);
-
-impl From<i32> for Dbgid {
-    fn from(dbgid: i32) -> Dbgid {
-        Dbgid(dbgid)
-    }
-}
-
-impl Display for Dbgid {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
+pub type Dbgid = i32;
 
 
-/// Error originating from tomr's dbg module's API
+/// Errors originating from tomr's dbg module's API
 #[derive(Debug)]
 pub enum Error {
     UnixError { errno: Errno },
@@ -64,12 +52,12 @@ impl Debugees {
         // iterate DEBUGEES vector to find lowest unused dbgid
         let mut dbgid = 0;
         for dbgee in self.vec.iter() {
-            if dbgee.dbgid == Dbgid(dbgid) { dbgid += 1; }
+            if dbgee.dbgid == dbgid { dbgid += 1; }
         }
 
         // push new Debugee with the generated dbgid to self
         self.vec.push(Debugee {
-            dbgid: Dbgid(dbgid),
+            dbgid,
             pid,
             origin,
         });
@@ -117,69 +105,18 @@ pub enum DebugeeOrigin {
     Attached,
 }
 
+
 lazy_static! {
+    /// Global state of debugged processes - 
+    /// Every debugged process has a `Debugee` struct entry here
     static ref DEBUGEES: RwLock<Debugees> = RwLock::new(Debugees::new());
 }
 
 
+/// Sets up the required environment for debugging functionalities to work, comprising:
+/// - Setting the debugger's signal handlers for the current process
 pub fn setup_dbg() {
-    setup_signal_handlers().ok();
-}
-
-
-/// Starts a new thread for signal handling
-fn setup_signal_handlers() -> Result<(), Error> {
-    let mut signals: SignalsInfo<WithOrigin> = SignalsInfo::<WithOrigin>::new(&[SIGINT, SIGCHLD])
-        .expect("Could not set up signal iterator through signal-hook");
-
-    thread::spawn(move || {
-        for siginfo in signals.forever() {
-            // this line is to help rust-analyzer to detect the type of `siginfo`
-            let siginfo: siginfo::Origin = siginfo;
-
-            match siginfo.signal {
-                SIGCHLD => { handle_sigchld(siginfo); }
-                SIGINT => { handle_sigint(siginfo); }
-                _ => {}
-            }
-        }
-    });
-
-    Ok(())
-}
-
-
-/// Handles all received SIGCHLD
-/// NOT FINISHED, SHOULD NOT PRINT DIRECTLY FROM dbg MODULE
-fn handle_sigchld(siginfo: siginfo::Origin) {
-    // determine signaling child debugee
-    let dbgee = DEBUGEES.read().unwrap()
-        .from_pid(Pid::from_raw(
-            siginfo.process
-                .expect("SIGCHLD unexpecedly did not contain an originating process")
-                .pid
-            )
-        )
-        .expect("Non-debugee process sent SIGCHLD, currently unhandled")
-        .clone();
-
-    match siginfo.cause {
-        siginfo::Cause::Chld(siginfo::Chld::Trapped) => {
-            println!("\nDebugee {} (PID {}) was trapped", dbgee.dbgid, dbgee.pid);
-        }
-        siginfo::Cause::Chld(siginfo::Chld::Exited) => {
-            println!("\nDebugee {} (PID {}) has exited", dbgee.dbgid, dbgee.pid);
-            DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
-        }
-        _ => {
-            println!("\nDebugee {:?} sent SIGCHLD: {:?}", dbgee, siginfo);
-        }
-    }
-}
-
-
-fn handle_sigint(_siginfo: siginfo::Origin) {
-    unimplemented!();
+    signals::setup_signal_handlers().ok();
 }
 
 
@@ -240,4 +177,5 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
 
     Ok(())
 }
+
 
