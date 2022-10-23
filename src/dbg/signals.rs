@@ -42,6 +42,7 @@ fn handle_sigchld(siginfo: siginfo::Origin) {
             println!("\nDebugee {} (PID {}) was trapped", dbgee.dbgid, dbgee.pid);
         }
         siginfo::Cause::Chld(siginfo::Chld::Exited) => {
+            // TODO: add printing of exit code. seems to require using the raw siginfo instead of the origin.
             println!("\nDebugee {} (PID {}) has exited", dbgee.dbgid, dbgee.pid);
             DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
         }

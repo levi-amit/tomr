@@ -35,6 +35,7 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 pub struct Debugees {
+    // TODO: Convert this to a HashMap with Dbgid as key
     vec: Vec<Debugee>,
 }
 
@@ -147,9 +148,13 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
         // fork successful, we are the child process. now traceme and exec!
         Ok(ForkResult::Child) => {
             ptrace::traceme().ok();
-            execvpe(&path, &args, &env)
-                .expect("Child Error: exec failed");
-            unreachable!();
+            match execvpe(&path, &args, &env) {
+                Err(errno) => {
+                    std::process::exit(errno as i32)
+                }
+                // Ok case is when exec succeeded, therefore this is unreachable
+                _ => unreachable!()
+            }
         }
 
         // fork failed
