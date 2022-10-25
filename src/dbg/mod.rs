@@ -8,11 +8,6 @@ use nix::{
     errno::Errno,
 };
 use lazy_static::lazy_static;
-use signal_hook::{
-    iterator::{SignalsInfo, exfiltrator::WithOrigin},
-    consts::{SIGINT, SIGCHLD},
-    low_level::siginfo,
-};
 
 use std::{
     sync::RwLock,
@@ -30,6 +25,7 @@ pub type Dbgid = i32;
 pub enum Error {
     UnixError { errno: Errno },
     NoSuchDebugee,
+    NoSuchProcess,
 }
 
 
@@ -125,6 +121,7 @@ pub fn setup_dbg() {
 pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> {
     // Since we're about to call nix functions,
     // we need to convert our string slices to CStrings
+    // TODO: Instead of panicing here, return a nice Error eh?
     let path = CString::new(path)
         .expect("Error: path passed to `spawn` must be convertible to CStrings.");
     let args: Vec<CString> = args.iter()
@@ -178,7 +175,16 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
 
     // call ptrace cont for the found PID, or returns UnixError with Errno on ptrace failure
     ptrace::cont(pid, None)
-        .or_else(|errno| Err(Error::UnixError { errno: errno }))?;
+        .or_else(|errno| {
+            match errno {
+                Errno::ESRCH => {
+                    Err(Error::NoSuchProcess)
+                }
+                _ => {
+                    Err(Error::UnixError { errno: errno })
+                }
+            }
+        })?;
 
     Ok(())
 }

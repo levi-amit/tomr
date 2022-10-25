@@ -1,17 +1,25 @@
 use super::*;
 
 
+
+use nix::libc::{
+    siginfo_t,
+    CLD_TRAPPED, CLD_EXITED,
+};
+use signal_hook::{
+    iterator::{SignalsInfo, exfiltrator::WithRawSiginfo},
+    consts::{SIGINT, SIGCHLD},
+};
+
+
 /// Starts a new thread for signal handling
 pub fn setup_signal_handlers() -> Result<(), Error> {
-    let mut signals: SignalsInfo<WithOrigin> = SignalsInfo::<WithOrigin>::new(&[SIGINT, SIGCHLD])
+    let mut signals: SignalsInfo<WithRawSiginfo> = SignalsInfo::<WithRawSiginfo>::new(&[SIGINT, SIGCHLD])
         .expect("Could not set up signal iterator through signal-hook");
 
     thread::spawn(move || {
         for siginfo in signals.forever() {
-            // this line is to help rust-analyzer to detect the type of `siginfo`
-            let siginfo: siginfo::Origin = siginfo;
-
-            match siginfo.signal {
+            match siginfo.si_signo {
                 SIGCHLD => { handle_sigchld(siginfo); }
                 SIGINT => { handle_sigint(siginfo); }
                 _ => {}
@@ -25,25 +33,32 @@ pub fn setup_signal_handlers() -> Result<(), Error> {
 
 /// Handles all received SIGCHLD
 /// NOT FINISHED, SHOULD NOT PRINT DIRECTLY FROM dbg MODULE
-fn handle_sigchld(siginfo: siginfo::Origin) {
+fn handle_sigchld(siginfo: siginfo_t) {
+    // TODO: Replace panics with smth else?
+    // TODO: Make this into a nice rusty enum
+    // underlying siginfo_t is a C union, meaning access to some fields is unsafe - 
+    // we must ensure si_signo is one which is really supposed to have this field in the instance of the union.
+    // Check the man page for `sigaction` for a full description of which fields every signal fills in.
+    if siginfo.si_signo != SIGCHLD { 
+        panic!("Incorrect signal handler called! handle_sigchld was called for a non SIGCHLD signal.");
+    }
+    #[allow(unused_variables)]
+    let (si_pid, si_status, si_uid, si_utime, si_stime) = unsafe {
+        (siginfo.si_pid(), siginfo.si_status(), siginfo.si_uid(), siginfo.si_utime(), siginfo.si_stime())
+    };
+    
     // determine signaling child debugee
     let dbgee = DEBUGEES.read().unwrap()
-        .from_pid(Pid::from_raw(
-            siginfo.process
-                .expect("SIGCHLD unexpecedly did not contain an originating process")
-                .pid
-            )
-        )
+        .from_pid(Pid::from_raw(si_pid))
         .expect("Non-debugee process sent SIGCHLD, currently unhandled")
         .clone();
 
-    match siginfo.cause {
-        siginfo::Cause::Chld(siginfo::Chld::Trapped) => {
-            println!("\nDebugee {} (PID {}) was trapped", dbgee.dbgid, dbgee.pid);
+    match siginfo.si_code {
+        CLD_TRAPPED => {
+            println!("\nDebugee {} (PID {}) was trapped (status {})", dbgee.dbgid, dbgee.pid, si_status);
         }
-        siginfo::Cause::Chld(siginfo::Chld::Exited) => {
-            // TODO: add printing of exit code. seems to require using the raw siginfo instead of the origin.
-            println!("\nDebugee {} (PID {}) has exited", dbgee.dbgid, dbgee.pid);
+        CLD_EXITED => {
+            println!("\nDebugee {} (PID {}) has exited (code {})", dbgee.dbgid, dbgee.pid, si_status);
             DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
         }
         _ => {
@@ -53,6 +68,6 @@ fn handle_sigchld(siginfo: siginfo::Origin) {
 }
 
 
-fn handle_sigint(_siginfo: siginfo::Origin) {
+fn handle_sigint(_siginfo: siginfo_t) {
     unimplemented!();
 }
