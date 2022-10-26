@@ -121,6 +121,8 @@ fn main_signal_handler(siginfo: &SigInfo) -> () {
 }
 
 
+/// Add a new signal handling function to be called for each received signal.
+/// The added function is called in a unique thread used only for signal handling.
 pub fn add_signal_handler(f: SignalHandler) {
     SIGNAL_HANDLERS.write().unwrap().push(f);
 }
