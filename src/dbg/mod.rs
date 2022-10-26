@@ -133,10 +133,14 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
             .expect("Error: env passed to `spawn` must be convertible to CStrings."))
         .collect();
 
+    // get a hold of the lock guard before any child process is born,
+    // to prevent the signal handling thread from attempting to remove the Debugee from DEBUGEES
+    // upon an early child death. 
+    let mut dbgees_guard = DEBUGEES.write().unwrap();
+
     match unsafe { fork() } {
         // fork successful, update DEBUGEES with the new child's details
         Ok(ForkResult::Parent { child }) => {
-            let mut dbgees_guard = DEBUGEES.write().unwrap();
             let dbgee = dbgees_guard.add(child, DebugeeOrigin::Spawned)
                 .expect("Error: Could not add Debugee to DEBUGEES");
             return Ok(dbgee.clone());
