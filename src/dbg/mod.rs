@@ -1,16 +1,19 @@
 #![allow(dead_code)]
 
-mod signals;
+pub mod signals;
 
 use nix::{
-    unistd::{Pid, fork, ForkResult, execvpe},
+    unistd::{fork, ForkResult, execvpe},
     sys::{ptrace}, 
     errno::Errno,
+};
+pub use nix::unistd::{
+    Pid,
 };
 use lazy_static::lazy_static;
 
 use std::{
-    sync::RwLock,
+    sync::{RwLock, RwLockReadGuard},
     vec::Vec,
     ffi::CString,
     thread,
@@ -73,14 +76,14 @@ impl Debugees {
         Ok(())
     }
 
-    fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
+    pub fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
         for dbgee in self.vec.iter() {
             if dbgee.dbgid == dbgid { return Ok(dbgee); }
         }
         Err(Error::NoSuchDebugee)
     }
 
-    fn from_pid(&self, pid: Pid) -> Result<&Debugee, Error> {
+    pub fn from_pid(&self, pid: Pid) -> Result<&Debugee, Error> {
         for dbgee in self.vec.iter() {
             if dbgee.pid == pid { return Ok(dbgee); }
         }
@@ -117,7 +120,7 @@ pub fn setup_dbg() {
 }
 
 
-/// Creates a new traced process, and sets it as the active process
+/// Creates a new traced process from an executable path and argv
 pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> {
     // Since we're about to call nix functions,
     // we need to convert our string slices to CStrings
@@ -166,9 +169,9 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
 }
 
 
-/// Returns a cloned copy of the static DEBUGEES Debugees struct
-pub fn debugees() -> Result<Debugees, Error> {
-    Ok(DEBUGEES.read().unwrap().clone())
+/// Returns a read-only reference of the global Debugees struct
+pub fn debugees() -> Result<RwLockReadGuard<'static, Debugees>, Error> {
+    Ok(DEBUGEES.read().unwrap())
 }
 
 
@@ -192,5 +195,3 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
 
     Ok(())
 }
-
-

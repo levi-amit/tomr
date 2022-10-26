@@ -1,8 +1,11 @@
 use super::*;
 
 use nix::libc::{
-    siginfo_t, uid_t, clock_t,
+    siginfo_t,
+};
+pub use nix::libc::{
     CLD_TRAPPED, CLD_EXITED,
+    uid_t, clock_t,
 };
 use signal_hook::{
     iterator::{SignalsInfo, exfiltrator::WithRawSiginfo},
@@ -10,7 +13,7 @@ use signal_hook::{
 };
 
 
-enum SigInfo {
+pub enum SigInfo {
     SIGCHLD { si_signo: i32, si_errno: i32, si_code: i32, si_pid: i32, si_status: i32, si_uid: uid_t, si_utime: clock_t, si_stime: clock_t },
     SIGINT  { si_signo: i32, si_errno: i32, si_code: i32, si_pid: i32, si_uid: uid_t },
 }
@@ -56,21 +59,36 @@ impl From<siginfo_t> for SigInfo {
 }
 
 
+/// Type describing an external signal handling function - receiving a SigInfo and outputting nothing.
+pub type SignalHandler = fn(&SigInfo) -> ();
+
+
+lazy_static! {
+    /// The global list of external modules' signal handler functions
+    static ref SIGNAL_HANDLERS: RwLock<Vec<SignalHandler>> = RwLock::new(Vec::new());
+}
+
+
+/// # SIGNAL HANDLING MODEL
+/// While there are some necessary actions to be taken upon reception of some signals (such as removing a Debugee member upon a child's death),
+/// a debugger UI might want to make more stuff happen upon signal reception, like printing an alert to terminal or opening an alert window.
+/// To enable this, upon signal reception two types of functions will be called:
+/// - This module's signal handling function corresponding to the received signal, called `handle_sig*` where `*` is whatever
+/// - A set of signal handling functions receiving a SigInfo enum which should do the handling needed for the external module's thingy.
+/// 
+/// To add an external signal handler function, append to the static `SIGNAL_HANDLERS` vector.
+
+
 /// Starts a new thread for signal handling
-pub fn setup_signal_handlers() -> Result<(), Error> {
+pub(in super) fn setup_signal_handlers() -> Result<(), Error> {
     let mut signals: SignalsInfo<WithRawSiginfo> = SignalsInfo::<WithRawSiginfo>::new(&[SIGINT, SIGCHLD])
         .expect("Could not set up signal iterator through signal-hook");
 
     thread::spawn(move || {
         for siginfo in signals.forever() {
-            match SigInfo::from(siginfo) {
-                SigInfo::SIGCHLD { si_signo, si_errno, si_code, si_pid, si_status, si_uid, si_utime, si_stime } => {
-                   handle_sigchld(si_signo, si_errno, si_code, si_pid, si_status, si_uid, si_utime, si_stime) 
-                }
-                SigInfo::SIGINT { si_signo, si_errno, si_code, si_pid, si_uid } => {
-                    handle_sigint(si_signo, si_errno, si_code, si_pid, si_uid)
-                }
-            }
+            let siginfo = SigInfo::from(siginfo);
+            SIGNAL_HANDLERS.read().unwrap().iter().for_each(|handler| handler(&siginfo));
+            main_signal_handler(&siginfo);
         }
     });
     
@@ -78,32 +96,31 @@ pub fn setup_signal_handlers() -> Result<(), Error> {
 }
 
 
-/// Handles all received SIGCHLD
-/// NOT FINISHED, SHOULD NOT PRINT DIRECTLY FROM dbg MODULE
-fn handle_sigchld(_si_signo: i32, _si_errno: i32, si_code: i32, si_pid: i32, si_status: i32, _si_uid: uid_t, _si_utime: clock_t, _si_stime: clock_t) {
+fn main_signal_handler(siginfo: &SigInfo) -> () {
     // TODO: replace panics w/ something which'll kill the main thread as well
 
-    // determine signaling child debugee
-    let dbgee = DEBUGEES.read().unwrap()
-        .from_pid(Pid::from_raw(si_pid))
-        .expect("Non-debugee process sent SIGCHLD, currently unhandled")
-        .clone();
+    match siginfo {
+        SigInfo::SIGCHLD { si_signo: _, si_errno: _, si_code, si_pid, si_status: _, si_uid: _, si_utime: _, si_stime: _ } => {
+            // determine signaling child debugee
+            let dbgee = DEBUGEES.read().unwrap()
+                .from_pid(Pid::from_raw(*si_pid))
+                .expect("Non-debugee process sent SIGCHLD, currently unhandled")
+                .clone();
 
-    match si_code {
-        CLD_TRAPPED => {
-            println!("\nDebugee {} (PID {}) was trapped (status {})", dbgee.dbgid, dbgee.pid, si_status);
+            match si_code {
+                &CLD_EXITED => {
+                    DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
+                }
+                _ => {}
+            }
         }
-        CLD_EXITED => {
-            println!("\nDebugee {} (PID {}) has exited (code {})", dbgee.dbgid, dbgee.pid, si_status);
-            DEBUGEES.write().unwrap().remove(dbgee.dbgid).ok();
-        }
-        _ => {
-            println!("\nDebugee {:?} sent SIGCHLD", dbgee);
+        SigInfo::SIGINT { si_signo: _, si_errno: _, si_code: _, si_pid: _, si_uid: _ } => {
+            unimplemented!()
         }
     }
 }
 
 
-fn handle_sigint(_si_signo: i32, _si_errno: i32, _si_code: i32, _si_pid: i32, _si_uid: uid_t) {
-    unimplemented!();
+pub fn add_signal_handler(f: SignalHandler) {
+    SIGNAL_HANDLERS.write().unwrap().push(f);
 }

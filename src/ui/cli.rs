@@ -7,6 +7,8 @@ use crate::dbg;
 
 
 pub fn start_cli() -> Result<(), ()> {
+    dbg::signals::add_signal_handler(signal_handler);
+
     loop {
         let input = prompt_for_line("tomr# ");
         handle_command_line(input).ok();
@@ -116,4 +118,31 @@ fn handle_command_line(input: String) -> Result<(), ()> {
     }
 
     Ok(())
+}
+
+fn signal_handler(siginfo: &dbg::signals::SigInfo) {
+    match siginfo {
+        dbg::signals::SigInfo::SIGCHLD { si_signo: _, si_errno: _, si_code, si_pid, si_status, si_uid: _, si_utime: _, si_stime: _ } => {
+            // determine signaling child debugee
+            let dbgee = dbg::debugees().unwrap()
+                .from_pid(dbg::Pid::from_raw(*si_pid))
+                .expect("Non-debugee process sent SIGCHLD, currently unhandled")
+                .clone();
+
+            match si_code {
+                &dbg::signals::CLD_TRAPPED => {
+                    println!("\nDebugee {} (PID {}) was trapped (status {})", dbgee.dbgid, dbgee.pid, si_status);
+                }
+                &dbg::signals::CLD_EXITED => {
+                    println!("\nDebugee {} (PID {}) has exited (code {})", dbgee.dbgid, dbgee.pid, si_status);
+                }
+                _ => {
+                    println!("\nDebugee {:?} sent SIGCHLD", dbgee);
+                }
+            }   
+        }
+        _ => {}
+    }
+
+   
 }
