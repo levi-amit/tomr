@@ -47,17 +47,21 @@ impl Debugees {
         }
     }
 
-    /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
-    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<&Debugee, ()> {
+    /// Returns an unused dbgid - this is used to determine the dbgid of newly added debugees.
+    fn get_free_dbgid(&self) -> Dbgid {
         // iterate DEBUGEES vector to find lowest unused dbgid
         let mut dbgid = 0;
         for dbgee in self.vec.iter() {
             if dbgee.dbgid == dbgid { dbgid += 1; }
         }
+        dbgid
+    }
 
+    /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
+    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<&Debugee, ()> {
         // push new Debugee with the generated dbgid to self
         self.vec.push(Debugee {
-            dbgid,
+            dbgid: self.get_free_dbgid(),
             pid,
             origin,
         });
