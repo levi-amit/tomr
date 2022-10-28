@@ -59,16 +59,14 @@ fn handle_command_line(input: String) -> Result<(), ()> {
             }
 
             let mut args = argstr.unwrap().split(' ');
+            
             // the path is the first arg to the command
             let path: &str = args.next().unwrap();
             // for the moment no env variable settings are available
             let env: Vec<&str> = Vec::new();
-            
             // Create vector of &str and store as argv
             let mut argv: Vec<&str> = vec![path];
-            if let Some(argv_str) = args.next() {
-                argv.extend(argv_str.split(' '));
-            }
+            argv.extend(args);
 
             dbg::spawn(path, &argv, &env)
                 .or_else(|e| {

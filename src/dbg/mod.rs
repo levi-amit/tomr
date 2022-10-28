@@ -15,7 +15,7 @@ use lazy_static::lazy_static;
 use std::{
     sync::{RwLock, RwLockReadGuard},
     vec::Vec,
-    ffi::CString,
+    ffi::{CString, NulError},
     thread,
 };
 
@@ -27,6 +27,7 @@ pub type Dbgid = i32;
 #[derive(Debug)]
 pub enum Error {
     UnixError { errno: Errno },
+    CStringConversionError {index: isize},
     NoSuchDebugee,
     NoSuchProcess,
 }
@@ -126,19 +127,18 @@ pub fn setup_dbg() {
 
 /// Creates a new traced process from an executable path and argv
 pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> {
-    // Since we're about to call nix functions,
-    // we need to convert our string slices to CStrings
-    // TODO: Instead of panicing here, return a nice Error eh?
-    let path = CString::new(path)
-        .expect("Error: path passed to `spawn` must be convertible to CStrings.");
-    let args: Vec<CString> = args.iter()
-        .map(|arg| CString::new(*arg)
-            .expect("Error: args passed to `spawn` must be convertible to CStrings."))
-        .collect();
-    let env: Vec<CString> = env.iter()
-        .map(|var| CString::new(*var)
-            .expect("Error: env passed to `spawn` must be convertible to CStrings."))
-        .collect();
+    println!("{:?} {:?}", path, args);
+
+    /// Errorless conversion to CString -
+    /// Any characters after the first internal null byte in a supplied string (if there exists one) will be ignored.
+    fn to_cstring(s: &str) -> CString {
+        CString::new(&s[..s.find('\0').unwrap_or(s.len())])
+        .expect("Unexpected error converting to CString")
+    }
+
+    let path = to_cstring(path);
+    let args: Vec<CString> = args.iter().map(|arg| to_cstring(*arg)).collect();
+    let env: Vec<CString> = env.iter().map(|var| to_cstring(*var)).collect();
 
     // get a hold of the lock guard before any child process is born,
     // to prevent the signal handling thread from attempting to remove the Debugee from DEBUGEES
