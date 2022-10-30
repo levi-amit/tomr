@@ -103,7 +103,7 @@ fn main_signal_handler(siginfo: &SigInfo) -> () {
         SigInfo::SIGCHLD { si_signo: _, si_errno: _, si_code, si_pid, si_status: _, si_uid: _, si_utime: _, si_stime: _ } => {
             // determine signaling child debugee
             let dbgee = DEBUGEES.read().unwrap()
-                .from_pid(Pid::from_raw(*si_pid))
+                .by_pid(Pid::from_raw(*si_pid))
                 .expect("Non-debugee process sent SIGCHLD, currently unhandled")
                 .clone();
 

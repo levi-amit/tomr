@@ -1,10 +1,10 @@
 #![allow(dead_code)]
 
-pub mod signals;
+pub mod signal_handling;
 
 use nix::{
     unistd::{fork, ForkResult, execvpe},
-    sys::{ptrace}, 
+    sys::{ptrace, signal::{self, Signal}}, 
     errno::Errno,
 };
 pub use nix::unistd::{
@@ -15,7 +15,7 @@ use lazy_static::lazy_static;
 use std::{
     sync::{RwLock, RwLockReadGuard},
     vec::Vec,
-    ffi::{CString, NulError},
+    ffi::CString,
     thread,
 };
 
@@ -34,16 +34,15 @@ pub enum Error {
 
 
 #[derive(Debug, Clone)]
-pub struct Debugees {
-    // TODO: Convert this to a HashMap with Dbgid as key
+pub struct DebugeeList {
     vec: Vec<Debugee>,
 }
 
-impl Debugees {
+impl DebugeeList {
 
     /// Creates a new Debugees struct with a new owned Vec
-    fn new() -> Debugees {
-        Debugees {
+    fn new() -> Self {
+        DebugeeList {
             vec: Vec::new(),
         }
     }
@@ -59,43 +58,34 @@ impl Debugees {
     }
 
     /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
-    fn add(&mut self, pid: Pid, origin: DebugeeOrigin) -> Result<&Debugee, ()> {
-        // push new Debugee with the generated dbgid to self
-        self.vec.push(Debugee {
-            dbgid: self.get_free_dbgid(),
-            pid,
-            origin,
-        });
+    fn add(&mut self, mut dbgee: Debugee) -> Result<&Debugee, Error> {
+        // push new Debugee with an unused generated dbgid to the Debugees vec
+        dbgee.dbgid = self.get_free_dbgid();
+        self.vec.push(dbgee);
 
         // return a reference to the pushed Debugee struct
-        Ok(&self.vec[self.vec.len() - 1])
+        Ok(self.vec.last().expect("Unexpected empty DebugeeList vector"))
     }
 
-    /// Removes a debugee from this struct's listing
-    fn remove(&mut self, dbgid: Dbgid) -> Result<(), Error> {
+    /// Removes a debugee from this debugee listing, and return the removed Debugee struct
+    fn remove(&mut self, dbgid: Dbgid) -> Result<Debugee, Error> {
         let index = self.vec.iter()
-            .position(|dbgee| dbgee.dbgid == dbgid)
-            .ok_or(Error::NoSuchDebugee)?;
+        .position(|dbgee| dbgee.dbgid == dbgid)
+        .ok_or(Error::NoSuchDebugee)?;
         
-        self.vec.remove(index);
-        Ok(())
+        Ok(self.vec.remove(index))
     }
 
-    pub fn from_dbgid(&self, dbgid: Dbgid) -> Result<&Debugee, Error> {
-        for dbgee in self.vec.iter() {
-            if dbgee.dbgid == dbgid { return Ok(dbgee); }
-        }
-        Err(Error::NoSuchDebugee)
+    pub fn by_dbgid(&self, dbgid: Dbgid) -> Option<&Debugee> {
+        self.vec.iter().find(|&dbgee| dbgee.dbgid == dbgid)
     }
 
-    pub fn from_pid(&self, pid: Pid) -> Result<&Debugee, Error> {
-        for dbgee in self.vec.iter() {
-            if dbgee.pid == pid { return Ok(dbgee); }
-        }
-        Err(Error::NoSuchDebugee)
+    pub fn by_pid(&self, pid: Pid) -> Option<&Debugee> {
+        self.vec.iter().find(|&dbgee|dbgee.pid == pid)
     }
 
 }
+
 
 #[derive(Debug, Clone)]
 pub struct Debugee {
@@ -114,21 +104,19 @@ pub enum DebugeeOrigin {
 lazy_static! {
     /// Global state of debugged processes - 
     /// Every debugged process has a `Debugee` struct entry here
-    static ref DEBUGEES: RwLock<Debugees> = RwLock::new(Debugees::new());
+    static ref DEBUGEES: RwLock<DebugeeList> = RwLock::new(DebugeeList::new());
 }
 
 
 /// Sets up the required environment for debugging functionalities to work, comprising:
 /// - Setting the debugger's signal handlers for the current process
 pub fn setup_dbg() {
-    signals::setup_signal_handlers().ok();
+    signal_handling::setup_signal_handlers().ok();
 }
 
 
 /// Creates a new traced process from an executable path and argv
 pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> {
-    println!("{:?} {:?}", path, args);
-
     /// Errorless conversion to CString -
     /// Any characters after the first internal null byte in a supplied string (if there exists one) will be ignored.
     fn to_cstring(s: &str) -> CString {
@@ -148,8 +136,13 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
     match unsafe { fork() } {
         // fork successful, update DEBUGEES with the new child's details
         Ok(ForkResult::Parent { child }) => {
-            let dbgee = dbgees_guard.add(child, DebugeeOrigin::Spawned)
-                .expect("Error: Could not add Debugee to DEBUGEES");
+            let dbgee = Debugee {
+                dbgid:  Dbgid::default(),
+                pid:    child,
+                origin: DebugeeOrigin::Spawned,
+            };
+            let dbgee = dbgees_guard.add(dbgee)
+            .expect("Error: Could not add Debugee to DEBUGEES");
             return Ok(dbgee.clone());
         }
 
@@ -174,7 +167,8 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
 
 
 /// Returns a read-only reference of the global Debugees struct
-pub fn debugees() -> Result<RwLockReadGuard<'static, Debugees>, Error> {
+pub fn debugees() -> Result<RwLockReadGuard<'static, DebugeeList>, Error> {
+    // TODO: Make this smarter idk, maybe return some struct with methods which can only read from DEBUGEES?
     Ok(DEBUGEES.read().unwrap())
 }
 
@@ -182,7 +176,8 @@ pub fn debugees() -> Result<RwLockReadGuard<'static, Debugees>, Error> {
 // Continues the execution of a debugee
 pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
     // resolve pid of process from dbgid, or return Error if dbgid is not a debugee
-    let pid = DEBUGEES.read().unwrap().from_dbgid(dbgid)?.pid;
+    let pid = DEBUGEES.read().unwrap()
+    .by_dbgid(dbgid).ok_or(Error::NoSuchDebugee)?.pid;
 
     // call ptrace cont for the found PID, or returns UnixError with Errno on ptrace failure
     ptrace::cont(pid, None)
@@ -199,3 +194,24 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
 
     Ok(())
 }
+
+
+/// Send a signal to a debugee by a dbgid
+pub fn send_signal(dbgid: Dbgid, signal: Signal) -> Result<(), Error> {
+    let pid = DEBUGEES.read().unwrap()
+    .by_dbgid(dbgid).ok_or(Error::NoSuchDebugee)?.pid;
+
+    nix::sys::signal::kill(pid, signal)
+    .or_else(|e| Err(Error::UnixError { errno: e }))?;
+    Ok(())
+}
+
+
+// /// Exit routine for the dbg module:
+// /// - Kill all spawned debugees
+// /// - Detach from all attached debugees
+// pub fn exit() -> Result<(), Error> {
+//     DEBUGEES.read().unwrap().
+
+//     Ok(())
+// }
