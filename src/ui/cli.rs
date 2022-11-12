@@ -6,7 +6,7 @@ use std::{
 use crate::dbg;
 
 
-pub fn start_cli() -> Result<(), ()> {
+pub fn start_cli() -> !{
     dbg::signal_handling::add_signal_handler(signal_handler);
 
     loop {
