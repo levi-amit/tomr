@@ -4,7 +4,7 @@ pub mod signal_handling;
 
 use nix::{
     unistd::{fork, ForkResult, execvpe},
-    sys::{ptrace, signal::{self, Signal}}, 
+    sys::{ptrace, signal::{Signal}},
     errno::Errno,
 };
 pub use nix::unistd::{
@@ -13,7 +13,7 @@ pub use nix::unistd::{
 use lazy_static::lazy_static;
 
 use std::{
-    sync::{RwLock, RwLockReadGuard},
+    sync::{RwLock},
     vec::Vec,
     ffi::CString,
     thread,
