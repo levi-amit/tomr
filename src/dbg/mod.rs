@@ -57,7 +57,7 @@ impl DebugeeList {
         dbgid
     }
 
-    /// Extends the debugees vector with a new Debugee struct, having a generated dbgid
+    /// Adds a new `Debugee` struct with a new generated unique `dbgid`.
     fn add(&mut self, mut dbgee: Debugee) -> Result<&Debugee, Error> {
         // push new Debugee with an unused generated dbgid to the Debugees vec
         dbgee.dbgid = self.get_free_dbgid();
@@ -86,6 +86,22 @@ impl DebugeeList {
 
 }
 
+// impl<'a> IntoIterator for &'a DebugeeList {
+//     type Item = &'a Debugee;
+//     type IntoIter = std::vec::IntoIter<&'a Debugee>;
+//
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.vec.into_iter()
+//     }
+// }
+
+
+lazy_static! {
+    /// Global state of debugged processes -
+    /// Every debugged process has a `Debugee` struct entry here
+    static ref DEBUGEES: RwLock<DebugeeList> = RwLock::new(DebugeeList::new());
+}
+
 
 #[derive(Debug, Clone)]
 pub struct Debugee {
@@ -98,13 +114,6 @@ pub struct Debugee {
 pub enum DebugeeOrigin {
     Spawned,
     Attached,
-}
-
-
-lazy_static! {
-    /// Global state of debugged processes - 
-    /// Every debugged process has a `Debugee` struct entry here
-    static ref DEBUGEES: RwLock<DebugeeList> = RwLock::new(DebugeeList::new());
 }
 
 
@@ -142,7 +151,7 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
                 origin: DebugeeOrigin::Spawned,
             };
             let dbgee = dbgees_guard.add(dbgee)
-            .expect("Error: Could not add Debugee to DEBUGEES");
+                .expect("Error: Could not add Debugee to DEBUGEES");
             return Ok(dbgee.clone());
         }
 
@@ -165,11 +174,12 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
     }
 }
 
-
-/// Returns a read-only reference of the global Debugees struct
-pub fn debugees() -> Result<RwLockReadGuard<'static, DebugeeList>, Error> {
-    // TODO: Make this smarter idk, maybe return some struct with methods which can only read from DEBUGEES?
-    Ok(DEBUGEES.read().unwrap())
+// TODO: Consider making this fallible and use `try_read` instead to prevent external locking for long periods?
+/// Performs an operation on an immutable view of the global DebugeeList
+pub fn with_debugees<F, T>(f: F) -> T
+where F: FnOnce(&DebugeeList) -> T {
+    let debugees_guard = DEBUGEES.read().unwrap();
+    f(&debugees_guard)
 }
 
 
@@ -187,7 +197,7 @@ pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
                     Err(Error::NoSuchProcess)
                 }
                 _ => {
-                    Err(Error::UnixError { errno: errno })
+                    Err(Error::UnixError { errno })
                 }
             }
         })?;

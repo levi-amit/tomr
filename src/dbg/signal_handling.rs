@@ -100,7 +100,7 @@ fn main_signal_handler(siginfo: &SigInfo) -> () {
     // TODO: replace panics w/ something which'll kill the main thread as well
 
     match siginfo {
-        SigInfo::SIGCHLD { si_signo: _, si_errno: _, si_code, si_pid, si_status: _, si_uid: _, si_utime: _, si_stime: _ } => {
+        SigInfo::SIGCHLD { si_code, si_pid, .. } => {
             // determine signaling child debugee
             let dbgee = DEBUGEES.read().unwrap()
                 .by_pid(Pid::from_raw(*si_pid))
@@ -114,7 +114,7 @@ fn main_signal_handler(siginfo: &SigInfo) -> () {
                 _ => {}
             }
         }
-        SigInfo::SIGINT { si_signo: _, si_errno: _, si_code: _, si_pid: _, si_uid: _ } => {
+        SigInfo::SIGINT { .. } => {
             unimplemented!()
         }
     }

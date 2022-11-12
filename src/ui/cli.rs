@@ -13,9 +13,6 @@ pub fn start_cli() -> !{
         let input = prompt_for_line("tomr# ");
         handle_command_line(input).ok();
     }
-
-    #[allow(unreachable_code)]
-    Ok(())
 }
 
 
@@ -78,7 +75,8 @@ fn handle_command_line(input: String) -> Result<(), ()> {
         Some("attach") => { unimplemented!() }
 
         Some("info") => {
-            println!("Debugged Processes:\n{:?}", dbg::debugees().unwrap());
+            println!("Debugged Processes:\n{:?}",
+                     dbg::with_debugees(|debugees| debugees.clone()));
         }
 
         Some("continue") => {
@@ -120,12 +118,14 @@ fn handle_command_line(input: String) -> Result<(), ()> {
 
 fn signal_handler(siginfo: &dbg::signal_handling::SigInfo) {
     match siginfo {
-        dbg::signal_handling::SigInfo::SIGCHLD { si_signo: _, si_errno: _, si_code, si_pid, si_status, si_uid: _, si_utime: _, si_stime: _ } => {
+        dbg::signal_handling::SigInfo::SIGCHLD { si_pid, si_code, si_status, .. } => {
             // determine signaling child debugee
-            let dbgee = dbg::debugees().unwrap()
-                .by_pid(dbg::Pid::from_raw(*si_pid))
-                .expect("Non-debugee process sent SIGCHLD, currently unhandled")
-                .clone();
+            let dbgee = dbg::with_debugees(|debugees|
+                debugees.by_pid(dbg::Pid::from_raw(*si_pid))
+                    .expect("Non-debugee process sent SIGCHLD, currently unhandled")
+                    .clone()
+                );
+
 
             match si_code {
                 &dbg::signal_handling::CLD_TRAPPED => {
