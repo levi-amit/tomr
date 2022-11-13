@@ -18,9 +18,33 @@ use std::{
     ffi::CString,
     thread,
 };
+use std::fmt::{Debug, Display, Formatter};
+
 
 /// Identifier for debugees
-pub type Dbgid = i32;
+#[derive(Debug, Clone)]
+pub struct Dbgid(i32);
+
+impl Display for Dbgid {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+       write!(f, "{}", self.0)
+    }
+}
+impl PartialEq for Dbgid {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl Default for Dbgid {
+    fn default() -> Self {
+        Self(0)
+    }
+}
+impl From<i32> for Dbgid {
+    fn from(dbgid: i32) -> Self {
+        Self(dbgid)
+    }
+}
 
 
 /// Errors originating from tomr's dbg module's API
@@ -50,11 +74,11 @@ impl DebugeeList {
     /// Returns an unused dbgid - this is used to determine the dbgid of newly added debugees.
     fn get_free_dbgid(&self) -> Dbgid {
         // iterate DEBUGEES vector to find lowest unused dbgid
-        let mut dbgid = 0;
+        let mut dbgid: i32 = 0;
         for dbgee in self.vec.iter() {
-            if dbgee.dbgid == dbgid { dbgid += 1; }
+            if dbgee.dbgid == dbgid.into() { dbgid += 1; }
         }
-        dbgid
+        dbgid.into()
     }
 
     /// Adds a new `Debugee` struct with a new generated unique `dbgid`.
@@ -104,16 +128,17 @@ lazy_static! {
 
 
 #[derive(Debug, Clone)]
+pub enum DebugeeOrigin {
+    Spawned,
+    Attached,
+}
+
+
+#[derive(Debug, Clone)]
 pub struct Debugee {
     pub dbgid: Dbgid,
     pub pid: Pid,
     pub origin: DebugeeOrigin,
-}
-
-#[derive(Debug, Clone)]
-pub enum DebugeeOrigin {
-    Spawned,
-    Attached,
 }
 
 
