@@ -1,28 +1,22 @@
-#![allow(dead_code)]
-
 pub mod signal_handling;
 
 use nix::{
-    unistd::{fork, ForkResult, execvpe},
-    sys::{ptrace, signal::{Signal}},
+    unistd::{fork, ForkResult, execvpe, Pid},
+    sys::{ptrace, signal::Signal},
     errno::Errno,
 };
-pub use nix::unistd::{
-    Pid,
-};
 use lazy_static::lazy_static;
-
 use std::{
     sync::{RwLock},
     vec::Vec,
     ffi::CString,
     thread,
+    fmt::{Debug, Display, Formatter},
 };
-use std::fmt::{Debug, Display, Formatter};
 
 
 /// Identifier for debugees
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Dbgid(i32);
 
 impl Display for Dbgid {
@@ -30,16 +24,13 @@ impl Display for Dbgid {
        write!(f, "{}", self.0)
     }
 }
-impl PartialEq for Dbgid {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
+
 impl Default for Dbgid {
     fn default() -> Self {
         Self(0)
     }
 }
+
 impl From<i32> for Dbgid {
     fn from(dbgid: i32) -> Self {
         Self(dbgid)
