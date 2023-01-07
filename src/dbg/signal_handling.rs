@@ -16,11 +16,6 @@ pub enum SigInfo {
     SIGINT  { si_signo: i32, si_errno: i32, si_code: i32, si_pid: i32, si_uid: uid_t },
 }
 
-impl SigInfo {
-    pub fn new<T: Into<Self>>(siginfo: T) -> Self {
-        siginfo.into()
-    }
-}
 
 impl From<siginfo_t> for SigInfo {
     fn from(siginfo: siginfo_t) -> Self {
