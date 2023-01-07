@@ -3,11 +3,11 @@ use std::{
     io::Write,
 };
 
-use crate::dbg;
+use crate::dbg::{self, Debugger};
 
 
 pub fn start_cli() -> !{
-    dbg::signal_handling::add_signal_handler(signal_handler);
+    dbg::add_signal_handler(signal_handler);
 
     loop {
         let input = prompt_for_line("tomr# ");
@@ -98,7 +98,7 @@ fn handle_command_line(input: String) -> Result<(), ()> {
                 }
             };
 
-            dbg::cont(dbgid)
+            dbgid.cont()
                 .or_else(|e| {
                     println!("Encountered error: {:?}", e);
                     Err(())
@@ -116,9 +116,9 @@ fn handle_command_line(input: String) -> Result<(), ()> {
     Ok(())
 }
 
-fn signal_handler(siginfo: &dbg::signal_handling::SigInfo) {
+fn signal_handler(siginfo: &dbg::SigInfo) {
     match siginfo {
-        dbg::signal_handling::SigInfo::SIGCHLD { si_pid, si_code, si_status, .. } => {
+        dbg::SigInfo::SIGCHLD { si_pid, si_code, si_status, .. } => {
             // determine signaling child debugee
             let dbgee = dbg::with_debugees(|debugees|
                 debugees.by_pid(dbg::Pid::from_raw(*si_pid))
@@ -126,12 +126,11 @@ fn signal_handler(siginfo: &dbg::signal_handling::SigInfo) {
                     .clone()
                 );
 
-
             match si_code {
-                &dbg::signal_handling::CLD_TRAPPED => {
+                &dbg::CLD_TRAPPED => {
                     println!("\nDebugee {} (PID {}) was trapped (status {})", dbgee.dbgid, dbgee.pid, si_status);
                 }
-                &dbg::signal_handling::CLD_EXITED => {
+                &dbg::CLD_EXITED => {
                     println!("\nDebugee {} (PID {}) has exited (code {})", dbgee.dbgid, dbgee.pid, si_status);
                 }
                 _ => {
@@ -140,7 +139,5 @@ fn signal_handler(siginfo: &dbg::signal_handling::SigInfo) {
             }   
         }
         _ => {}
-    }
-
-   
+    }   
 }

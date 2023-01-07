@@ -1,12 +1,10 @@
-use super::*;
-
-use nix::libc::{
-    siginfo_t,
-};
 pub use nix::libc::{
     CLD_TRAPPED, CLD_EXITED,
     uid_t, clock_t,
 };
+
+use super::*;
+use nix::libc::siginfo_t;
 use signal_hook::{
     iterator::{SignalsInfo, exfiltrator::WithRawSiginfo},
     consts::{SIGINT, SIGCHLD},
@@ -28,7 +26,7 @@ impl From<siginfo_t> for SigInfo {
     fn from(siginfo: siginfo_t) -> Self {
         // underlying siginfo_t is a C union, meaning access to some fields is unsafe - 
         // we must ensure si_signo is one which is really supposed to have any field in the union.
-        // Check the man page for `sigaction` for a full description of which fields every signal fills in.
+        // Check the man page for `sigaction` for a full description of which fields of the union every signal fills in.
         match siginfo.si_signo {
             SIGCHLD => {
                 SigInfo::SIGCHLD {
@@ -59,7 +57,7 @@ impl From<siginfo_t> for SigInfo {
 }
 
 
-/// Type describing an external signal handling function - receiving a SigInfo and outputting nothing.
+/// Type describing an external signal handling function - receiving a SigInfo and returning nothing.
 pub type SignalHandler = fn(&SigInfo) -> ();
 
 
@@ -80,14 +78,16 @@ lazy_static! {
 
 
 /// Starts a new thread for signal handling
-pub(in super) fn setup_signal_handlers() -> Result<(), Error> {
-    let mut signals: SignalsInfo<WithRawSiginfo> = SignalsInfo::<WithRawSiginfo>::new(&[SIGINT, SIGCHLD])
+pub (in super) fn setup_signal_handlers() -> Result<(), Error> {
+    let mut signals: SignalsInfo<WithRawSiginfo> =
+        SignalsInfo::<WithRawSiginfo>::new(&[SIGINT, SIGCHLD])
         .expect("Could not set up signal iterator through signal-hook");
 
     thread::spawn(move || {
         for siginfo in signals.forever() {
             let siginfo = SigInfo::from(siginfo);
-            SIGNAL_HANDLERS.read().unwrap().iter().for_each(|handler| handler(&siginfo));
+            SIGNAL_HANDLERS.read().unwrap().iter()
+                .for_each(|handler| handler(&siginfo));
             main_signal_handler(&siginfo);
         }
     });
@@ -104,7 +104,7 @@ fn main_signal_handler(siginfo: &SigInfo) -> () {
             // determine signaling child debugee
             let dbgee = DEBUGEES.read().unwrap()
                 .by_pid(Pid::from_raw(*si_pid))
-                .expect("Non-debugee process sent SIGCHLD, currently unhandled")
+                .expect("Non-debugee process sent SIGCHLD")
                 .clone();
 
             match si_code {

@@ -1,7 +1,10 @@
-pub mod signal_handling;
+mod signal_handling;
+
+pub use nix::unistd::Pid;
+pub use signal_handling::*;
 
 use nix::{
-    unistd::{fork, ForkResult, execvpe, Pid},
+    unistd::{fork, ForkResult, execvpe},
     sys::{ptrace, signal::Signal},
     errno::Errno,
 };
@@ -38,13 +41,109 @@ impl From<i32> for Dbgid {
 }
 
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Origin {
+    Spawned,
+    Attached,
+}
+
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Debugee {
+    pub dbgid: Dbgid,
+    pub pid: Pid,
+    pub origin: Origin,
+}
+
+
 /// Errors originating from tomr's dbg module's API
 #[derive(Debug)]
 pub enum Error {
-    UnixError { errno: Errno },
-    CStringConversionError {index: isize},
+    Errno { errno: Errno },
     NoSuchDebugee,
     NoSuchProcess,
+}
+
+
+pub trait Debugger {
+    
+    fn get_debugee(&self) -> Result<Debugee, Error>;
+    fn cont(&self) -> Result<(), Error>;
+    fn send_signal(&self, signal: Signal) -> Result<(), Error>;
+
+}
+
+
+impl Debugger for Debugee {
+
+    fn get_debugee(&self) -> Result<Debugee, Error> {
+        Ok(*self)
+    }
+
+    fn cont(&self) -> Result<(), Error> {
+        ptrace::cont(self.pid, None)
+        .or_else(|errno| {
+            match errno {
+                Errno::ESRCH => {
+                    Err(Error::NoSuchProcess)
+                }
+                _ => {
+                    Err(Error::Errno { errno })
+                }
+            }
+        })?;
+
+        Ok(())
+    }
+
+    fn send_signal(&self, signal: Signal) -> Result<(), Error> {
+        nix::sys::signal::kill(self.pid, signal)
+            .or_else(|e| Err(Error::Errno { errno: e }))?;
+        
+        Ok(())
+    }
+
+}
+
+
+impl Debugger for Dbgid {
+
+    fn get_debugee(&self) -> Result<Debugee, Error> {
+        Ok(DEBUGEES.read().unwrap()
+                .by_dbgid(*self).ok_or(Error::NoSuchDebugee)?
+                .clone())
+    }
+
+    fn cont(&self) -> Result<(), Error> {
+        self.get_debugee()?.cont()
+    }
+
+    fn send_signal(&self, signal: Signal) -> Result<(), Error> {
+        self.get_debugee()?.send_signal(signal)
+    }
+
+}
+
+
+impl Debugger for Pid {
+
+    fn get_debugee(&self) -> Result<Debugee, Error> {
+        Ok(DEBUGEES.read().unwrap()
+                .by_pid(*self).ok_or(Error::NoSuchDebugee)?
+                .clone())
+    }
+
+    fn cont(&self) -> Result<(), Error> {
+        self.get_debugee()?.cont()
+    }
+
+    fn send_signal(&self, signal: Signal) -> Result<(), Error> {
+        nix::sys::signal::kill(*self, signal)
+            .or_else(|e| Err(Error::Errno { errno: e }))?;
+        
+        Ok(())
+    }
+
 }
 
 
@@ -101,35 +200,9 @@ impl DebugeeList {
 
 }
 
-// impl<'a> IntoIterator for &'a DebugeeList {
-//     type Item = &'a Debugee;
-//     type IntoIter = std::vec::IntoIter<&'a Debugee>;
-//
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.vec.into_iter()
-//     }
-// }
-
 
 lazy_static! {
-    /// Global state of debugged processes -
-    /// Every debugged process has a `Debugee` struct entry here
     static ref DEBUGEES: RwLock<DebugeeList> = RwLock::new(DebugeeList::new());
-}
-
-
-#[derive(Debug, Clone)]
-pub enum DebugeeOrigin {
-    Spawned,
-    Attached,
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Debugee {
-    pub dbgid: Dbgid,
-    pub pid: Pid,
-    pub origin: DebugeeOrigin,
 }
 
 
@@ -137,6 +210,14 @@ pub struct Debugee {
 /// - Setting the debugger's signal handlers for the current process
 pub fn setup_dbg() {
     signal_handling::setup_signal_handlers().ok();
+}
+
+
+/// Performs an operation on an immutable view of the global DebugeeList
+pub fn with_debugees<F, T>(f: F) -> T
+where F: FnOnce(&DebugeeList) -> T {
+    let debugees_guard = DEBUGEES.read().unwrap();
+    f(&debugees_guard)
 }
 
 
@@ -164,7 +245,7 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
             let dbgee = Debugee {
                 dbgid:  Dbgid::default(),
                 pid:    child,
-                origin: DebugeeOrigin::Spawned,
+                origin: Origin::Spawned,
             };
             let dbgee = dbgees_guard.add(dbgee)
                 .expect("Error: Could not add Debugee to DEBUGEES");
@@ -185,59 +266,7 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
 
         // fork failed
         Err(errno) => {
-            return Err(Error::UnixError { errno })
+            return Err(Error::Errno { errno })
         }
     }
 }
-
-// TODO: Consider making this fallible and use `try_read` instead to prevent external locking for long periods?
-/// Performs an operation on an immutable view of the global DebugeeList
-pub fn with_debugees<F, T>(f: F) -> T
-where F: FnOnce(&DebugeeList) -> T {
-    let debugees_guard = DEBUGEES.read().unwrap();
-    f(&debugees_guard)
-}
-
-
-// Continues the execution of a debugee
-pub fn cont(dbgid: Dbgid) -> Result<(), Error> {
-    // resolve pid of process from dbgid, or return Error if dbgid is not a debugee
-    let pid = DEBUGEES.read().unwrap()
-    .by_dbgid(dbgid).ok_or(Error::NoSuchDebugee)?.pid;
-
-    // call ptrace cont for the found PID, or returns UnixError with Errno on ptrace failure
-    ptrace::cont(pid, None)
-        .or_else(|errno| {
-            match errno {
-                Errno::ESRCH => {
-                    Err(Error::NoSuchProcess)
-                }
-                _ => {
-                    Err(Error::UnixError { errno })
-                }
-            }
-        })?;
-
-    Ok(())
-}
-
-
-/// Send a signal to a debugee by a dbgid
-pub fn send_signal(dbgid: Dbgid, signal: Signal) -> Result<(), Error> {
-    let pid = DEBUGEES.read().unwrap()
-    .by_dbgid(dbgid).ok_or(Error::NoSuchDebugee)?.pid;
-
-    nix::sys::signal::kill(pid, signal)
-    .or_else(|e| Err(Error::UnixError { errno: e }))?;
-    Ok(())
-}
-
-
-// /// Exit routine for the dbg module:
-// /// - Kill all spawned debugees
-// /// - Detach from all attached debugees
-// pub fn exit() -> Result<(), Error> {
-//     DEBUGEES.read().unwrap().
-
-//     Ok(())
-// }
