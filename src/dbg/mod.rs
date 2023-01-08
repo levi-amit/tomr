@@ -270,3 +270,15 @@ pub fn spawn(path: &str, args: &[&str], env: &[&str]) -> Result<Debugee, Error> 
         }
     }
 }
+
+
+/// Attaches to a running process
+pub fn attach(pid: Pid) -> Result<Debugee, Error> {
+    ptrace::attach(pid).map_err(|errno| Error::Errno { errno })?;
+    let attached = Debugee {
+        dbgid: 0.into(),
+        origin: Origin::Attached,
+        pid,
+    };
+    Ok(DEBUGEES.write().unwrap().add(attached)?.clone())
+}

@@ -1,9 +1,8 @@
+use crate::dbg::{self, Debugger, Pid};
 use std::{
     process::exit,
     io::Write,
 };
-
-use crate::dbg::{self, Debugger};
 
 
 pub fn start_cli() -> !{
@@ -40,6 +39,7 @@ fn handle_command_line(input: String) -> Result<(), ()> {
             help - show this message \n\
             exit - terminate this process \n\
             spawn <exec_path> [args ...] - create a new debugged process \n\
+            attach <PID> - attach to a running process \n\
             info - show info about currently debugged processes \
             ");
         }
@@ -72,7 +72,29 @@ fn handle_command_line(input: String) -> Result<(), ()> {
                 })?;
         }
 
-        Some("attach") => { unimplemented!() }
+        Some("attach") => { 
+            let pid: Pid = match words.next() {
+                None => {
+                    println!("no arguments supplied. correct usage is :\n\
+                    attach <pid>");
+                    return Err(());
+                }
+                Some(args) => {
+                    let pid = args.parse::<i32>().or_else(|_| {
+                        println!("PID must be a valid number");
+                        Err(())
+                    })?;
+                    Pid::from_raw(pid)
+                }
+            };
+
+            let attached = dbg::attach(pid).or_else(|e| {
+                println!("Encountered error: {:?}", e);
+                Err(())
+            })?;
+
+            println!("Attached to PID {}, new dbgid is {}", pid, attached.dbgid);
+        }
 
         Some("info") => {
             println!("Debugged Processes:\n{:?}",
@@ -89,20 +111,17 @@ fn handle_command_line(input: String) -> Result<(), ()> {
                     return Err(());
                 }
                 Some(args) =>  {
-                    args.parse::<i32>()
-                        .or_else(|_| {
-                            println!("dbgid must be a number");
-                            Err(())
-                        })?
-                       .into()
+                    args.parse::<i32>().or_else(|_| {
+                        println!("dbgid must be a number");
+                        Err(())
+                    })?.into()
                 }
             };
 
-            dbgid.cont()
-                .or_else(|e| {
-                    println!("Encountered error: {:?}", e);
-                    Err(())
-                })?;
+            dbgid.cont().or_else(|e| {
+                println!("Encountered error: {:?}", e);
+                Err(())
+            })?;
         }
 
         Some("freeze") => {}
