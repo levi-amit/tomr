@@ -81,26 +81,11 @@ impl Debugger for Debugee {
     }
 
     fn cont(&self) -> Result<(), Error> {
-        ptrace::cont(self.pid, None)
-        .or_else(|errno| {
-            match errno {
-                Errno::ESRCH => {
-                    Err(Error::NoSuchProcess)
-                }
-                _ => {
-                    Err(Error::Errno { errno })
-                }
-            }
-        })?;
-
-        Ok(())
+        self.pid.cont()
     }
 
     fn send_signal(&self, signal: Signal) -> Result<(), Error> {
-        nix::sys::signal::kill(self.pid, signal)
-            .or_else(|e| Err(Error::Errno { errno: e }))?;
-        
-        Ok(())
+        self.pid.send_signal(signal)
     }
 
 }
@@ -134,7 +119,19 @@ impl Debugger for Pid {
     }
 
     fn cont(&self) -> Result<(), Error> {
-        self.get_debugee()?.cont()
+        ptrace::cont(*self, None)
+        .or_else(|errno| {
+            match errno {
+                Errno::ESRCH => {
+                    Err(Error::NoSuchProcess)
+                }
+                _ => {
+                    Err(Error::Errno { errno })
+                }
+            }
+        })?;
+
+        Ok(())
     }
 
     fn send_signal(&self, signal: Signal) -> Result<(), Error> {
